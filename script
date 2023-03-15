@@ -1,0 +1,119 @@
+#!/bin/bash
+
+# Set keymap to Eastern Time Zone, USA
+loadkeys us
+
+# Update the system clock
+timedatectl set-ntp true
+
+# Enable wifi and prompt to connect
+wifi-menu
+
+# Update mirrorlist
+pacman -Syy reflector
+reflector -c "United States" -a 6 --sort rate --save /etc/pacman.d/mirrorlist
+
+# Create partitions
+echo "Creating partitions"
+echo "Please enter disk name (e.g. /dev/sda):"
+read disk
+echo "Please enter disk size for EFI partition (e.g. 200M):"
+read efi_size
+echo "Creating EFI partition"
+parted --script $disk mklabel gpt \
+  mkpart ESP fat32 1M $efi_size \
+  set 1 boot on \
+  mkpart primary ext4 $efi_size 100%
+
+# Format partitions
+echo "Formatting partitions"
+mkfs.fat -F32 ${disk}1
+mkfs.ext4 ${disk}2
+
+# Mount partitions
+echo "Mounting partitions"
+mount ${disk}2 /mnt
+mkdir /mnt/boot
+mount ${disk}1 /mnt/boot
+
+# Install base system
+echo "Installing base system"
+pacstrap /mnt base linux linux-firmware nano
+
+# Generate fstab
+echo "Generating fstab"
+genfstab -U /mnt >> /mnt/etc/fstab
+
+# Change root into the new system
+echo "Chrooting into new system"
+arch-chroot /mnt
+
+# Create swapfile
+echo "Creating swapfile"
+dd if=/dev/zero of=/swapfile bs=1M count=512 status=progress
+chmod 0600 /swapfile
+mkswap -U $(uuidgen) /swapfile
+echo "/swapfile none swap defaults 0 0" >> /etc/fstab
+swapon /swapfile
+
+# Set timezone and localization
+echo "Setting timezone and localization"
+timedatectl set-timezone America/New_York
+locale-gen
+echo "LANG=en_US.UTF-8" > /etc/locale.conf
+echo "KEYMAP=en_US" > /etc/vconsole.conf
+
+# Set hostname
+echo "Setting hostname"
+echo "127.0.0.1 localhost" > /etc/hosts
+echo "::1 localhost" >> /etc/hosts
+echo "127.0.1.1 archlinux.localdomain archlinux" >> /etc/hosts
+
+# Set root password
+echo "Setting root password"
+echo "Meg@Man1977@@" | passwd --stdin
+
+# Install packages
+echo "Installing packages"
+pacman -S grub efibootmgr networkmanager network-manager-applet wireless_tools wpa_supplicant dialog os-prober base-devel linux-headers reflector git bluez bluez-utils cups xdg-utils xdg-user-dirs
+
+# Install and configure GRUB
+echo "Installing and configuring GRUB"
+grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
+grub-mkconfig -o /boot/grub/grub.cfg
+
+# Enable network services
+echo "Enabling network services"
+systemctl enable NetworkManager
+systemctl enable bluetooth
+systemctl enable org.cups.cupsd
+
+# Create new user
+echo "Creating new user"
+useradd -m -G wheel -s /bin/bash arch
+echo "Password123!!" | passwd --stdin arch
+chage -d 0 arch
+
+# Install YAY Package Manager
+cd /opt
+sudo git clone https://aur.archlinux.org/yay-git.git
+sudo chown -R arch:arch ./yay-git
+cd yay-git
+makepkg -si
+
+# Install GNOME Desktop with LXDM
+sudo pacman -S xorg-server xorg-xinit gnome lxdm
+sudo systemctl enable lxdm
+
+# Install Office Applications
+sudo pacman -S libreoffice-fresh
+yay -S microsoft-edge-dev microsoft-edge-beta microsoft-edge-dev
+
+# Install MS Fonts
+yay -S ttf-ms-fonts
+
+# Install Timeshift and SSD Trim
+sudo pacman -S timeshift
+sudo systemctl enable fstrim.timer
+
+echo "Installation completed. Please reboot the machine."
